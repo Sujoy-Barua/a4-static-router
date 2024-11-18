@@ -1,9 +1,12 @@
 #include "ArpCache.h"
 
+#include <chrono>
 #include <thread>
 #include <cstring>
 #include <spdlog/spdlog.h>
 
+#include "IArpCache.h"
+#include "RouterTypes.h"
 #include "protocol.h"
 #include "utils.h"
 
@@ -32,6 +35,14 @@ void ArpCache::loop() {
 void ArpCache::tick() {
     std::unique_lock lock(mutex);
     // TODO: Your code here
+    for (auto& [ip, request] : requests) {
+        if (std::chrono::steady_clock::now() - request.lastSent >= std::chrono::seconds(1) &&
+        request.timesSent < 7) {
+            spdlog::info("Retrying ARP request for IP={}", inet_ntoa({ip}));
+            mac_addr broadcast = ;
+            Packet arpRequest = 
+        }
+    }
 
 
     // TODO: Your code should end here

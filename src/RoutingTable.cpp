@@ -1,6 +1,8 @@
 #include "RoutingTable.h"
+#include "IRoutingTable.h"
 
 #include <arpa/inet.h>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <spdlog/spdlog.h>
@@ -40,8 +42,27 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
 
 std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     // TODO: Your code below
+    RoutingEntry* bestMatch = nullptr;
+    int longestMatch = -1;
+    for (auto& entry : routingEntries) {
+        uint32_t maskedIP = ip & entry.mask;
+        uint32_t maskedDest = entry.dest & entry.mask;
 
-    return routingEntries[0]; // Placeholder
+        if (maskedIP == maskedDest) {
+            int matchLength = __builtin_popcount(entry.mask);
+
+            if (matchLength > longestMatch) {
+                longestMatch = matchLength;
+                bestMatch = &entry;
+            }
+        }
+    }
+
+    if (bestMatch) {
+        return *bestMatch;
+    } else {
+        return std::nullopt;
+    }
 }
 
 RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {
