@@ -16,7 +16,7 @@ struct ArpEntry
 struct AwaitingPacket
 {
     Packet packet; /**< Packet that is awaiting the ARP response. */
-    std::string iface; /**< Interface on which to send the packet. */
+    std::string iface; /**< Interface on which the packet came in */
 };
 
 struct ArpRequest

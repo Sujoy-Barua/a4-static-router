@@ -335,9 +335,10 @@ In summary, your solution:
 10. SHOULD drop a packet waiting for an ARP reply after 7 failed requests for a reply since receiving the packet.
 
 ### FAQ
-- If you get a packet with TTL=1, you should send a ICMP Time To Live Exceeded Message. If you get a packet with TTL=0 somehow, you should feel free to drop it. 
+- You should only send a ICMP Time To Live Exceeded Message if a packet's TTL is 0 **after** decrementing the TTL. If you get a packet where the TTL is somehow already 0, you should feel free to drop it. In other words, you should send back a ICMP Time to Live Exceeded message if and only if you decrement the TTL, and the TTL becomes 0. 
 - If you get a ping request for one of the switch's interfaces, you should not send an ARP request to figure out where to respond, as you already know what the destination MAC address should be. At the same time, no mapping not explicitly figured out from an ARP response should enter your ARP cache. 
-- Values in the routing table are in network order. 
+- Values in the routing table are in network order.
+- Your router's ARP Cache should only cache ARP responses for ARP requests that it sends out. It should not cache responses for ARP requests from other hosts on the network. 
 
 <a name="debugging"></a>
 ## How to Debug
