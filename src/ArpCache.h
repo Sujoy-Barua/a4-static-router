@@ -45,6 +45,8 @@ private:
 
     std::unordered_map<ip_addr, ArpEntry> entries;
     std::unordered_map<ip_addr, ArpRequest> requests;
+
+    Packet createARPReqPacket(uint32_t tip, std::string& iface);
 };
 
 

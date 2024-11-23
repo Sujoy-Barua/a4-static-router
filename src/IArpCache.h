@@ -19,7 +19,7 @@ struct AwaitingPacket
     std::string iface; /**< Interface on which the packet came in */
 };
 
-struct ArpRequest
+struct ArpRequest 
 {
     uint32_t ip; /**< IP address for which the ARP request is being sent. */
     std::chrono::time_point<std::chrono::steady_clock> lastSent; /**< Time when the request was last sent.*/
