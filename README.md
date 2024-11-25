@@ -218,6 +218,8 @@ This section has an outline of the forwarding logic for a router, although it do
 
 When an IP packet arrives at the router, it arrives inside an Ethernet frame. Your router needs to check if it is the final destination of the packet, and if not, forward it along the correct link based on its forwarding table. The forwarding table names the IP address of the next hop. The router must use ARP to learn the Ethernet address of the next hop IP address, so it can address the Ethernet frame correctly.
 
+Your router for this project is assumed to act as a bridge between several LANs; in the example topology, we represent each LAN as a single host (client, server1, server2) for simplicity. In general, you can assume that each interface of your router is part of a different LAN. In other words, you should not ever forward LAN-specific packets (such as ARP Requests, discussed below) from one interface to another. 
+
 ### A Note on IP Addresses
 Every interface on the Mininet switch (`eth1`, `eth2`, `eth3`) has an individual IP address along with the hosts (`client`, `server1`, `server2`). Having a separate IP for every interface on a L3 switch is common practice, as it helps route traffic between different networks correctly. In a real situation, the L3 switch would probably have each interface connect to a  subnetwork -- in this case, we simplify this by just having each interface point to a different host. 
 
@@ -250,7 +252,9 @@ ICMP sends control information. In this assignment, your router will use ICMP to
 * **Port unreachable (type 3, code 3):** Sent if an IP packet containing a UDP or TCP payload is sent to one of the router's interfaces. This is needed for `traceroute` to work.
 * **Time exceeded (type 11, code 0):** Sent if an IP packet is discarded during processing because the TTL field is 0. This is also needed for `traceroute` to work.
 
-Some ICMP messages may come from the source address of any of the router interfaces, while others must come from a specific interface. Please refer to [RFC 792](https://tools.ietf.org/html/rfc792) for details. As mentioned above, the only incoming ICMP message destined towards the router's IPs that you have to explicitly process are ICMP echo requests. You may want to create additional structs for ICMP messages for convenience, but make sure to use the `packed` attribute so that the compiler doesn't try to align the fields in the struct to word boundaries. To learn more, feel free to look at [GCC Type Attributes](https://gcc.gnu.org/onlinedocs/gcc-3.2/gcc/Type-Attributes.html).
+Some ICMP messages may come from the source address of any of the router interfaces, while others must come from a specific interface. Please refer to [RFC 792](https://tools.ietf.org/html/rfc792) and [RFC 4884](https://datatracker.ietf.org/doc/html/rfc4884) for details. As mentioned above, the only incoming ICMP message destined towards the router's IPs that you have to explicitly process are ICMP echo requests. You may want to create additional structs for ICMP messages for convenience, but make sure to use the `packed` attribute so that the compiler doesn't try to align the fields in the struct to word boundaries. To learn more, feel free to look at [GCC Type Attributes](https://gcc.gnu.org/onlinedocs/gcc-3.2/gcc/Type-Attributes.html).
+
+For echo replies, make sure that you include the original data. For other ICMP messages (i.e. Type 3 and Type 11) that you send, make sure the data field is populated correctly with the incoming packet that it is responding to. 
 
 #### Address Resolution Protocol
 ARP is needed to determine the next-hop MAC address that corresponds to the next-hop IP address stored in the routing table. Without the ability to generate an ARP request and process ARP replies, your router would not be able to fill out the destination MAC address field of the raw Ethernet frame you are sending over the outgoing interface. Analogously, without the ability to process ARP requests and generate ARP replies, no other router could send your router Ethernet frames. Therefore, your router must generate and process ARP requests and replies.
@@ -259,7 +263,7 @@ To lessen the number of ARP requests sent out, you are required to cache ARP rep
 
 When forwarding a packet to a next-hop IP address, the router should first check the ARP cache for the corresponding MAC address before sending an ARP request. In the case of a cache miss, an ARP request should be sent to a target IP address about once every second until a reply comes in. If the ARP request is sent seven times with no reply, an ICMP destination host unreachable is sent back to the source IP as stated above. The provided ARP request queue will help you manage the request queue.
 
-In the case of an ARP request, you should only send an ARP reply if the target IP address is one of your router's IP addresses.
+In the case of an ARP request, you should only send an ARP reply if the target IP address is the IP address of the interface on which the ARP request arrived. Remember, as our model for this project is a router that sits between LANs, ARP requests for your router's IPs that do not arrive on the correct interface don't make sense, and should be ignored. 
 
 Note: ARP requests are sent to the broadcast MAC address (`ff-ff-ff-ff-ff-ff`). ARP replies are sent directly to the requester's MAC address.
 
@@ -334,11 +338,18 @@ In summary, your solution:
 9. MUST queue all packets waiting for outstanding ARP replies.
 10. SHOULD drop a packet waiting for an ARP reply after 7 failed requests for a reply since receiving the packet.
 
-### FAQ
-- You should only send a ICMP Time To Live Exceeded Message if a packet's TTL is 0 **after** decrementing the TTL. If you get a packet where the TTL is somehow already 0, you should feel free to drop it. In other words, you should send back a ICMP Time to Live Exceeded message if and only if you decrement the TTL, and the TTL becomes 0. 
-- If you get a ping request for one of the switch's interfaces, you should not send an ARP request to figure out where to respond, as you already know what the destination MAC address should be. At the same time, no mapping not explicitly figured out from an ARP response should enter your ARP cache. 
-- Values in the routing table are in network order.
+### FAQ (i.e. weird edge cases)
+- You should only send a ICMP Time To Live Exceeded Message if a packet's TTL is 0 **after** decrementing the TTL. If you get a packet where the TTL is somehow already 0, you should drop it. In other words, you should send back an ICMP Time to Live Exceeded message if and only if you decrement the TTL, and the TTL becomes 0. 
+- If you get a ping request for one of the switch's interfaces, you should not send an ARP request to figure out where to respond, as you already know what the destination MAC address should be. At the same time, no mapping not explicitly figured out from an ARP response should enter your ARP cache.
 - Your router's ARP Cache should only cache ARP responses for ARP requests that it sends out. It should not cache responses for ARP requests from other hosts on the network. 
+- Values in the routing table are in network order.
+- To calculate the checksum for IP packets:
+   1) Set all fields in the packet to the appropriate values, converting things to network order as necessary (generally, anything that is a short would need to be converted).
+   2) Set the checksum to 0.
+   3) Call the cksum function over the header to calculate the checksum.
+   4) Set the cksum in the header to the value you just calculated without any host/network conversion.
+- You do not need to think about the Ethernet preamble and CRC; these will not be included in any packets given to you, nor should you include them in any packets that you send out. The ethernet header should be exactly the fields in `sr_ethernet_hdr`.
+- As you are implementing a router, it is important to be efficient. While we do not need you to write hyper-efficient code, it is important to make design decisions that ensure packets are sent out as soon as possible. 
 
 <a name="debugging"></a>
 ## How to Debug
@@ -378,17 +389,23 @@ We have provided you with some basic debugging functions in `utils.h`, `utils.c`
 
 <a name="submitting"></a>
 ## Submitting
-Submission to the autograder will be done [here](https://g489.eecs.umich.edu/). Submission policy will be announced when the autograder is released, which we anticipate being around halfway through the assignment.
-
-This assignment follows more of a fill-in-the-blank format than the first three, meaning we provide code skeleton that you fill in. Therefore,
+Submission to the autograder will be done [here](https://g489.eecs.umich.edu/).
 
 The submission may include any files that you have modified or added. However, **you must ensure that:**
 - The `IPacketSender.h` file is not modified.
 - The `IArpCache.h` file is not modified.
 - The `IRoutingTable.h` file is not modified.
+- Nothing in the `detail/` directory is modified.
 - The signatures of `StaticRouter`'s constructor and `handlePacket` function are not modified.
+
+### What to Submit
+You should submit all files **outside** of the `detail/` directory that is necessary for your code to compile. We will automatically compile any added files with `.cpp` or `.h` extensions with your code. You must ensure that your code compiles with no modifications to the provided `CMakeLists.txt` file.
+### Autograder
+Fall 2024 is the first time we are using our new Autograder for this assignment! Although we have attempted to test it thoroughly, please reach out during Office Hours or over Ed if you think that you are incorrectly failing a test case.  
+
+In general, we have attempted to provide a significant amount of feedback through these test cases. You will notice that the Autograder allows you to see whatever your code prints out, in addition to output from our test cases that explains precisely what you have gotten wrong. In theory, this output allows you to reverse-engineer some parts of our test cases; however, we do not anticipate that doing this will be any more useful to you than simply looking at the AG output. If you think some output is unclear or poorly formatted, please reach out! We reserve the right to modify grades as we see fit if we feel that you have attempted to "hardcode" any outputs to deceive the Autograder. 
 
 <a name="important-notes"></a>
 
 ## Acknowledgements
-This programming assignment is based on Stanford's lab 3 from CS 144: Introduction to Computer Networking and translated into C++ by the University of Michigan's EECS 489 F24 staff.
+This programming assignment is based on Stanford's lab 3 from CS 144: Introduction to Computer Networking, and translated into C++ by the University of Michigan's EECS 489 F24 staff.
