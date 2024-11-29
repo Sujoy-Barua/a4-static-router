@@ -39,7 +39,7 @@ Packet ArpCache::createARPReqPacket(uint32_t tip, std::string& iface) {
 
     sr_arp_hdr arpHdr;
     arpHdr.ar_hrd = htons(arp_hrd_ethernet);
-    arpHdr.ar_pro = htons(ethertype_ip);
+    arpHdr.ar_pro = htons(ethertype_arp);
     arpHdr.ar_hln = 6;
     arpHdr.ar_pln = 4;
     arpHdr.ar_op = htons(arp_op_request);
@@ -63,16 +63,104 @@ Packet ArpCache::createARPReqPacket(uint32_t tip, std::string& iface) {
     return packet;
 }
 
-void ArpCache::tick() {
+void ArpCache::sendQueuedPackets(uint32_t ip) {
+    std::list<AwaitingPacket>& awaitingPacketsList = requests[ip].awaitingPackets;
+    std::optional<RoutingEntry> rEntry = routingTable->getRoutingEntry(ip);
+    std::string ifaceOut = rEntry->iface;
+
+    if (!rEntry) {
+        for (auto& awaitingPacket : awaitingPacketsList) {
+            packetSender->sendPacket(awaitingPacket.packet, ifaceOut);
+        }
+    }
+}
+
+void ArpCache::sendICMP31(ArpRequest arpReq) {
+
+    for (auto& [awaitingPacket, iface] : arpReq.awaitingPackets) {
+
+        auto* etherHeaderIn = reinterpret_cast<sr_ethernet_hdr_t*>(awaitingPacket.data());
+        auto* ipHeader = reinterpret_cast<sr_ip_hdr_t*>(awaitingPacket.data() + sizeof(sr_ethernet_hdr));
+
+        sr_icmp_t3_hdr icmpHeaderOut;
+        icmpHeaderOut.icmp_type = 3;
+        icmpHeaderOut.icmp_code = 1;
+        icmpHeaderOut.icmp_sum = htons(0);
+        icmpHeaderOut.unused = htons(0);
+        icmpHeaderOut.next_mtu = htons(0);
+        // uint16_t icmp_data_size = sizeof(sr_ip_hdr) + ;
+        // Create a buffer for the outgoing ICMP packet (header + payload)
+        std::vector<uint8_t> icmpPacketBuffer(sizeof(sr_icmp_t3_hdr));
+
+        // Copy ICMP header into the outgoing packet buffer
+        memcpy(icmpPacketBuffer.data(), &icmpHeaderOut, sizeof(sr_icmp_t3_hdr));
+
+        // Copy full ip header, then 8 bytes of ip payload, from the incoming packet for ICMP data
+        memcpy(icmpHeaderOut.data, &ipHeader, sizeof(sr_ip_hdr_t));
+        uint8_t* ipPayloadStart = awaitingPacket.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t);
+        memcpy(icmpHeaderOut.data + sizeof(sr_ip_hdr), ipPayloadStart, 8); 
+    
+
+        // checksum for the outgoing ICMP message
+        icmpHeaderOut.icmp_sum = htons(cksum(icmpPacketBuffer.data(), icmpPacketBuffer.size()));
+        memcpy(icmpPacketBuffer.data(), &icmpHeaderOut, sizeof(sr_icmp_t3_hdr)); // Update the checksum in the header
+
+        bool srcIPoverride = true;
+
+        // outgoing IP header
+        sr_ip_hdr ipHeaderOut;
+        ipHeaderOut.ip_v = 4;
+        ipHeaderOut.ip_hl = 5;
+        ipHeaderOut.ip_tos = ipHeader->ip_tos;
+        ipHeaderOut.ip_len = htons(sizeof(sr_ip_hdr_t) + icmpPacketBuffer.size());
+        ipHeaderOut.ip_id = 0;
+        ipHeaderOut.ip_off = 0;
+        ipHeaderOut.ip_ttl = 64;
+        ipHeaderOut.ip_p = 1;
+        ipHeaderOut.ip_sum = 0;
+        ipHeaderOut.ip_src = ipHeader->ip_dst; 
+        ipHeaderOut.ip_dst = ipHeader->ip_src;
+
+        if (srcIPoverride) {
+            ipHeaderOut.ip_src = htonl(routingTable->getRoutingInterface(iface).ip);
+        }
+
+        // Compute the checksum for the outgoing IP header
+        ipHeaderOut.ip_sum = htons(cksum(&ipHeaderOut, sizeof(sr_ip_hdr_t)));
+
+        // Create the outgoing Ethernet header
+        sr_ethernet_hdr_t etherHeaderOut;
+        etherHeaderOut.ether_type = htons(ethertype_ip);
+        memcpy(etherHeaderOut.ether_dhost, etherHeaderIn->ether_shost, ETHER_ADDR_LEN);
+        memcpy(etherHeaderOut.ether_shost, etherHeaderIn->ether_dhost, ETHER_ADDR_LEN);
+
+        Packet outPacket;
+        outPacket.resize(sizeof(sr_ethernet_hdr) + sizeof(sr_ip_hdr) + icmpPacketBuffer.size());
+
+        // Copy Ethernet, IP, and ICMP data into outPacket
+        memcpy(outPacket.data(), &etherHeaderOut, sizeof(sr_ethernet_hdr));
+        memcpy(outPacket.data() + sizeof(sr_ethernet_hdr), &ipHeaderOut, sizeof(sr_ip_hdr));
+        memcpy(outPacket.data() + sizeof(sr_ethernet_hdr) + sizeof(sr_ip_hdr), icmpPacketBuffer.data(), icmpPacketBuffer.size());
+
+        packetSender->sendPacket(outPacket, iface);
+    }
+}
+
+void ArpCache::tick() { // ip forwarding mechanism adds to the "requests" variable, arp reply 
+                        // handler section adds to the "entries" variable | both are in StaticRouter.cpp
     std::unique_lock lock(mutex);
     // TODO: Your code here
     for (auto& [ip, request] : requests) {
-        if (std::chrono::steady_clock::now() - request.lastSent >= std::chrono::seconds(1) &&
-        request.timesSent < 7 && !entries.contains(request.ip)) {
+        if (((std::chrono::steady_clock::now() - request.lastSent) >= std::chrono::seconds(1)) &&
+        (request.timesSent < 7) && (!entries.contains(request.ip))) {
             spdlog::info("Retrying ARP request for IP={}", inet_ntoa({ip}));
             std::optional<RoutingEntry> rEntry = routingTable->getRoutingEntry(request.ip);
-            Packet arpReqPacket = createARPReqPacket(request.ip, rEntry->iface);
+            Packet arpReqPacket = createARPReqPacket(ip, rEntry->iface);
             packetSender->sendPacket(arpReqPacket, rEntry->iface);
+            request.lastSent = std::chrono::steady_clock::now();
+            request.timesSent++;
+        } else if (request.timesSent == 7 && !entries.contains(request.ip)) {
+            sendICMP31(request);
         }
     }
 
@@ -90,7 +178,7 @@ void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
     // TODO: Your code below
     ArpEntry newEntry = {ip, mac, std::chrono::steady_clock::now()};
     entries[ip] = newEntry;
-
+    sendQueuedPackets(ip);
 }
 
 std::optional<mac_addr> ArpCache::getEntry(uint32_t ip) {

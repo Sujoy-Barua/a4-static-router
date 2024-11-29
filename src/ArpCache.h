@@ -1,6 +1,7 @@
 #ifndef ARPCACHE_H
 #define ARPCACHE_H
 
+#include <cstdint>
 #include <vector>
 #include <array>
 #include <chrono>
@@ -15,6 +16,7 @@
 #include "IPacketSender.h"
 #include "RouterTypes.h"
 #include "IRoutingTable.h"
+#include "protocol.h"
 
 class ArpCache : public IArpCache {
 public:
@@ -47,6 +49,8 @@ private:
     std::unordered_map<ip_addr, ArpRequest> requests;
 
     Packet createARPReqPacket(uint32_t tip, std::string& iface);
+    void sendQueuedPackets(uint32_t ip);
+    void sendICMP31(ArpRequest arpReq);
 };
 
 
