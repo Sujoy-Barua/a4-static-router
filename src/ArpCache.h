@@ -49,7 +49,7 @@ private:
     std::unordered_map<ip_addr, ArpRequest> requests;
 
     Packet createARPReqPacket(uint32_t tip, std::string& iface);
-    void sendQueuedPackets(uint32_t ip);
+    void sendQueuedPackets(uint32_t ip, const mac_addr& mac);
     void sendICMP31(ArpRequest arpReq);
 };
 

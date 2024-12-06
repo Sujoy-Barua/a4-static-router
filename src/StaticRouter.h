@@ -36,7 +36,7 @@ private:
     void handleICMPechoPacket(Packet& packet, std::string& iface, sr_ethernet_hdr_t& etherHeaderIn, sr_ip_hdr_t& ipHeader);
     void handleICMPmsgPacket(Packet& packet, std::string& iface, sr_ethernet_hdr_t& etherHeaderIn, sr_ip_hdr_t& ipHeader, uint8_t type, uint8_t code);
     void prepAndSendPacket(std::string& iface, sr_ip_hdr_t& ipHeader, sr_ethernet_hdr_t& etherHeaderIn, std::vector<uint8_t>& icmpPacketBuffer, bool srcIPoverride);
-    void forwardIPpacket(Packet packet, sr_ethernet_hdr_t& etherHeaderIn, sr_ip_hdr_t& ipHeader, std::string& iface, mac_addr& destMac);
+    void forwardOrQueueIPpacket(Packet packet, sr_ethernet_hdr_t& etherHeaderIn, sr_ip_hdr_t& ipHeader, std::string& ifaceIn);
 
     mac_addr toMacAddr(const unsigned char* macArray);
 };
